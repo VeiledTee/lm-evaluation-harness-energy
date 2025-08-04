@@ -4,6 +4,7 @@ import copy
 import itertools
 import json
 import logging
+import os
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
@@ -39,6 +40,7 @@ from lm_eval import utils
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import TemplateLM
 from lm_eval.models.utils import Collator, chunks, configure_pad_token
+from codecarbon import EmissionsTracker
 
 
 if TYPE_CHECKING:
@@ -228,6 +230,16 @@ class TemplateAPI(TemplateLM):
                     revision=revision,
                     use_fast=use_fast_tokenizer,
                 )
+
+        output_dir = "./codecarbon_results"
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        self.tracker = EmissionsTracker(
+            project_name="per_query_emissions",
+            output_dir=output_dir,
+            save_to_file=False
+        )
+        self.emissions_data_list = []
 
     @abc.abstractmethod
     def _create_payload(
@@ -421,6 +433,7 @@ class TemplateAPI(TemplateLM):
         # !!! Copy: shared dict for each request, need new object !!!
         gen_kwargs = copy.deepcopy(gen_kwargs)
         try:
+            self.tracker.start()
             response = requests.post(
                 self.base_url,
                 json=self._create_payload(
@@ -434,6 +447,17 @@ class TemplateAPI(TemplateLM):
                 headers=self.header,
                 verify=self.verify_certificate,
             )
+            self.tracker.stop()
+            print({
+                "duration": float(self.tracker.final_emissions_data.duration),
+                "energy_consumed": float(self.tracker.final_emissions_data.energy_consumed),
+                "emissions": float(self.tracker.final_emissions_data.emissions),
+            })
+            self.emissions_data_list.append({
+                "duration": float(self.tracker.final_emissions_data.duration),
+                "energy_consumed": float(self.tracker.final_emissions_data.energy_consumed),
+                "emissions": float(self.tracker.final_emissions_data.emissions),
+            })
             if not response.ok:
                 eval_logger.warning(
                     f"API request failed with error message: {response.text}. Retrying..."
@@ -769,6 +793,9 @@ class TemplateAPI(TemplateLM):
                     )
                 )
                 res.extend(results)
+
+        with open("./codecarbon_results/per_query_emissions.json", "w") as f:
+            json.dump(self.emissions_data_list, f, indent=4)
 
         return re_ord.get_original(res)
 
