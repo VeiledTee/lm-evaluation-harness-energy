@@ -64,10 +64,15 @@ def process_docs(dataset: datasets.Dataset) -> datasets.Dataset:
     return dataset.map(_process, remove_columns=dataset.column_names)
 
 
-def doc_to_text(doc: dict) -> str:
+def doc_to_text_with_context(doc: dict) -> str:
     # Build prompt with question and supporting contexts
     ctx = "".join(f"- {c}" for c in doc.get('context', []))
     return f"Question: {doc.get('question', '')}\nContext: {ctx}\nAnswer:"
+
+
+def doc_to_text_without_context(doc: dict) -> str:
+    # Build a prompt with only the question
+    return f"Question: {doc.get('question', '')}\nAnswer:"
 
 
 def doc_to_target(doc: dict) -> str:
