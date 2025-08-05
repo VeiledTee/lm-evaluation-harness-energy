@@ -1,0 +1,22 @@
+task: hotpotqa_fullwiki_exclude_context
+dataset_path: hotpot_qa
+dataset_name: fullwiki
+training_split: train
+validation_split: validation
+test_split: validation
+# Preprocess and prompt setup
+process_docs: !function utils.process_docs
+doc_to_text: !function utils.doc_to_text_without_context
+doc_to_target: !function utils.doc_to_target
+# Metrics matching official HotpotQA evaluation
+metric_list:
+  - metric: !function utils.em_squad_max_impl
+    aggregation: mean
+    higher_is_better: true
+  - metric: !function utils.f1_squad_max_impl
+    aggregation: mean
+    higher_is_better: true
+# Tags
+tag:
+  - hotpot
+  - qa
