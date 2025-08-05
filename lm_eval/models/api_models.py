@@ -237,7 +237,8 @@ class TemplateAPI(TemplateLM):
         self.tracker = EmissionsTracker(
             project_name="per_query_emissions",
             output_dir=output_dir,
-            save_to_file=False
+            save_to_file=False,
+            log_level='error',
         )
         self.emissions_data_list = []
 
@@ -433,7 +434,6 @@ class TemplateAPI(TemplateLM):
         # !!! Copy: shared dict for each request, need new object !!!
         gen_kwargs = copy.deepcopy(gen_kwargs)
         try:
-            self.tracker.start()
             response = requests.post(
                 self.base_url,
                 json=self._create_payload(
@@ -447,17 +447,6 @@ class TemplateAPI(TemplateLM):
                 headers=self.header,
                 verify=self.verify_certificate,
             )
-            self.tracker.stop()
-            print({
-                "duration": float(self.tracker.final_emissions_data.duration),
-                "energy_consumed": float(self.tracker.final_emissions_data.energy_consumed),
-                "emissions": float(self.tracker.final_emissions_data.emissions),
-            })
-            self.emissions_data_list.append({
-                "duration": float(self.tracker.final_emissions_data.duration),
-                "energy_consumed": float(self.tracker.final_emissions_data.energy_consumed),
-                "emissions": float(self.tracker.final_emissions_data.emissions),
-            })
             if not response.ok:
                 eval_logger.warning(
                     f"API request failed with error message: {response.text}. Retrying..."
@@ -667,6 +656,11 @@ class TemplateAPI(TemplateLM):
     ) -> List[str]:
         res = []
 
+        if isinstance(requests[0].doc['answer'], dict):
+            gold_answers = [instance.doc['answer']['value'] for instance in requests]  # get the answers for current requests
+        else:
+            gold_answers = [instance.doc['answer'] for instance in requests]  # get the answers for current requests
+
         def _collate_gen(_requests):
             # sort by the length of the non-tokenized contexts
             return -len(_requests[0])
@@ -694,6 +688,9 @@ class TemplateAPI(TemplateLM):
             )
         else:
             requests, all_gen_kwargs = zip(*(req.args for req in requests))
+
+        per_query_data = []
+
         if self.tokenized_requests:
             encodings_list = self.tok_encode(
                 requests, add_special_tokens=self.add_bos_token
@@ -718,7 +715,7 @@ class TemplateAPI(TemplateLM):
             )
         if self._concurrent <= 1:
             pbar = tqdm(desc="Requesting API", total=len(requests))
-            for chunk in chunked:
+            for i, chunk in enumerate(chunked):
                 contexts, all_gen_kwargs, encodings_list = zip(*chunk)
                 if self.tokenized_requests:
                     max_gen_toks = all_gen_kwargs[0].get(
@@ -729,13 +726,16 @@ class TemplateAPI(TemplateLM):
                     encodings_list = [x[-max_context_len:] for x in encodings_list]
 
                     if any(
-                        len(x) + max_gen_toks > self.max_length for x in encodings_list
+                            len(x) + max_gen_toks > self.max_length for x in encodings_list
                     ):
                         eval_logger.warning(
                             f"Some contexts exceeded (max length: ({self.max_length}) - max_gen_toks: ({max_gen_toks}). They were left truncated."
                         )
 
                 req = encodings_list if self.tokenized_requests else contexts
+
+                # Start the emissions tracker before the API call
+                self.tracker.start()
                 outputs = retry(
                     stop=stop_after_attempt(self.max_retries),
                     wait=wait_exponential(multiplier=0.5, min=1, max=10),
@@ -745,15 +745,30 @@ class TemplateAPI(TemplateLM):
                     generate=True,
                     gen_kwargs=copy.deepcopy(all_gen_kwargs[0]),
                 )
-                for generated_text, context in zip(
-                    self.parse_generations(
-                        outputs=outputs,
-                        contexts=contexts,
-                    ),
-                    contexts,
+                self.tracker.stop()
+
+                for j, (generated_text, context) in enumerate(
+                        zip(
+                            self.parse_generations(
+                                outputs=outputs,
+                                contexts=contexts,
+                            ),
+                            contexts,
+                        )
                 ):
                     if generated_text is not None:
                         res.append(generated_text)
+
+                        # Create the dictionary with all the info and append it to the list
+                        per_query_data.append({
+                            "qid": i * self._batch_size + j,
+                            "question": json.loads(req[0].prompt)[0]['content'].replace("Question: ", '').replace("Answer:", '').strip(),
+                            "answer": gold_answers[i],
+                            "pred": generated_text,
+                            "duration": float(self.tracker.final_emissions_data.duration),
+                            "energy_consumed": float(self.tracker.final_emissions_data.energy_consumed),
+                            "emissions": float(self.tracker.final_emissions_data.emissions),
+                        })
 
                         # partial caching
                         if context is not None:
@@ -795,7 +810,7 @@ class TemplateAPI(TemplateLM):
                 res.extend(results)
 
         with open("./codecarbon_results/per_query_emissions.json", "w") as f:
-            json.dump(self.emissions_data_list, f, indent=4)
+            json.dump(per_query_data, f, indent=4)
 
         return re_ord.get_original(res)
 
