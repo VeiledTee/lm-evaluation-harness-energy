@@ -656,11 +656,6 @@ class TemplateAPI(TemplateLM):
     ) -> List[str]:
         res = []
 
-        if isinstance(requests[0].doc['answer'], dict):
-            gold_answers = [instance.doc['answer']['value'] for instance in requests]  # get the answers for current requests
-        else:
-            gold_answers = [instance.doc['answer'] for instance in requests]  # get the answers for current requests
-
         def _collate_gen(_requests):
             # sort by the length of the non-tokenized contexts
             return -len(_requests[0])
@@ -763,7 +758,6 @@ class TemplateAPI(TemplateLM):
                         per_query_data.append({
                             "qid": i * self._batch_size + j,
                             "question": json.loads(req[0].prompt)[0]['content'].replace("Question: ", '').replace("Answer:", '').strip(),
-                            "answer": gold_answers[i],
                             "pred": generated_text,
                             "duration": float(self.tracker.final_emissions_data.duration),
                             "energy_consumed": float(self.tracker.final_emissions_data.energy_consumed),
@@ -809,7 +803,7 @@ class TemplateAPI(TemplateLM):
                 )
                 res.extend(results)
 
-        with open("./codecarbon_results/per_query_emissions.json", "w") as f:
+        with open(f"./codecarbon_results/{self.model}_per_query_emissions.json", "w") as f:
             json.dump(per_query_data, f, indent=4)
 
         return re_ord.get_original(res)
