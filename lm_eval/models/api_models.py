@@ -684,7 +684,7 @@ class TemplateAPI(TemplateLM):
         else:
             requests, all_gen_kwargs = zip(*(req.args for req in requests))
 
-        per_query_data = []
+        per_query_data = []  # for codecarbon emission tracking
 
         if self.tokenized_requests:
             encodings_list = self.tok_encode(
@@ -730,7 +730,7 @@ class TemplateAPI(TemplateLM):
                 req = encodings_list if self.tokenized_requests else contexts
 
                 # Start the emissions tracker before the API call
-                self.tracker.start()
+                self.tracker.start()  # start emissions tracker
                 outputs = retry(
                     stop=stop_after_attempt(self.max_retries),
                     wait=wait_exponential(multiplier=0.5, min=1, max=10),
@@ -740,7 +740,7 @@ class TemplateAPI(TemplateLM):
                     generate=True,
                     gen_kwargs=copy.deepcopy(all_gen_kwargs[0]),
                 )
-                self.tracker.stop()
+                self.tracker.stop()  # stop emissions tracker after inference
 
                 for j, (generated_text, context) in enumerate(
                         zip(
@@ -803,6 +803,7 @@ class TemplateAPI(TemplateLM):
                 )
                 res.extend(results)
 
+        # save emission data
         with open(f"./codecarbon_results/{self.model}_per_query_emissions.json", "w") as f:
             json.dump(per_query_data, f, indent=4)
 
