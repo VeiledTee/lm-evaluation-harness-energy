@@ -802,7 +802,7 @@ class TemplateAPI(TemplateLM):
                     )
                 )
                 res.extend(results)
-        print(per_query_data)
+
         with open(f"./codecarbon_results/{self.model.replace(':', '_')}_per_query_emissions.json", "w") as f:
             json.dump(per_query_data, f, indent=4)
 
