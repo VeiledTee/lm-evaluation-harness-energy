@@ -803,8 +803,7 @@ class TemplateAPI(TemplateLM):
                 )
                 res.extend(results)
 
-        # save emission data
-        with open(f"./codecarbon_results/{self.model}_per_query_emissions.json", "w") as f:
+        with open(f"./codecarbon_results/{self.model.replace(':', '_')}_per_query_emissions.json", "w") as f:
             json.dump(per_query_data, f, indent=4)
 
         return re_ord.get_original(res)
